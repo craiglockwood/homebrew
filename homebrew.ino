@@ -7,18 +7,20 @@
 
 
 /**
- * Monitors temp of beer in fermentation stage and whilst kegged
- * 
+ * Ferment Mode monitors temp of beer in fermentation stage and tracks the amount of days in fermentation.
+ * Pour Mode monitors pouring temperature and the amount of liquid poured since last reset
  */
 
 
 
 // NAME THE BEER
-char myBEER[] = "American Pale Ale";
+char myBEER[] = "American Pale Ale     ";
 
 
-
-
+// A bit to create timers
+unsigned long startMillis;  //some global variables available anywhere in the program
+unsigned long currentMillis;
+const unsigned long tempdelay = 4000;  //the value is a number of milliseconds
 
 
 #define PIN 5  //pin for neopixels
@@ -85,7 +87,7 @@ void setup()
 	lcd.begin();
 	lcd.backlight();
 
-
+ 
 
 // Set Pin connected to Relay as an OUTPUT
 pinMode(relayPin, OUTPUT); 
@@ -98,6 +100,8 @@ digitalWrite(relayPin, LOW);
  // start serial port 
  Serial.begin(9600); 
 
+ //initial start time
+ startMillis = millis();  
   
 Serial.println("Fermento setup");  
 
@@ -115,6 +119,7 @@ lcd.print("Testing sensors...");
  
  colorWipe(strip.Color(0, 255, 0), 50); // Red
  colorWipe(strip.Color(0, 0, 255), 50); // Blue
+ colorWipe(strip.Color(255, 0, 0), 50); // Green
 
 // stop for 1 sec
 delay(1000);
@@ -153,26 +158,32 @@ void loop()
 
 {
 
-
-
-  
-  
- 
-
-
-lcd.setCursor(0,0);
+  lcd.setCursor(0,0);
 // print the beer name set from variable
 lcd.print(myBEER);
 
 lcd.setCursor(0,1);
-lcd.print("Current temp: ");
-// print current temp
+lcd.print("Tank temp:   ");
+// timer - print the temp every 4 seconds
+  currentMillis = millis();  //get the current "time" (actually the number of milliseconds since the program started)
+  if (currentMillis - startMillis >= tempdelay)  //test whether the period has elapsed
+  {
+startMillis += tempdelay; 
 lcd.print(sensors.getTempCByIndex(0));
-lcd.print("c  ");
+
+lcd.print((char)223);
+lcd.print("c      ");
+  }
+
+ 
+ 
+
+
+
 
    
 lcd.setCursor(0,2);
-lcd.print("Target temp:  ");
+lcd.print("Target temp: ");
  // read input twice
   rawValue = analogRead(A0);
   rawValue = analogRead(A0); // double read
@@ -189,6 +200,7 @@ lcd.print("Target temp:  ");
 
     // print target temperature
       lcd.print(  potPercentage);
+      lcd.print((char)223);
       lcd.print("c      ");
       
       oldPercentage = potPercentage;
@@ -201,17 +213,30 @@ lcd.print("Target temp:  ");
 
 
 
-
-
-
-
-
   
   
 lcd.setCursor(0,3);
-lcd.print("Day in cycle: ");
+lcd.print("Fermenting:  ");
+           
 // print the day in cycle
 lcd.print(day());
+
+if (day() < 2)
+
+{lcd.print(" day");
+}
+
+else
+
+{lcd.print(" days");
+}
+
+
+
+
+
+
+
 
 
 if ((sensors.getTempCByIndex(0))>potPercentage)
@@ -318,7 +343,7 @@ strip.setPixelColor(0, 255, 0, 0);
  strip.show();
 }
 
-if (minute() == 9)
+if (day() == 9)
 {
 strip.setPixelColor(7, 0, 255, 0);
 strip.setPixelColor(6, 0, 255, 0);
