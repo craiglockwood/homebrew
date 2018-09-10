@@ -1,4 +1,3 @@
-
 #include <TimeLib.h>
 #include <Adafruit_NeoPixel.h>
 #include <Wire.h>
@@ -18,7 +17,8 @@
 char myBEER[] = "American Pale Ale";
 
 
-
+int target;
+int targetPot = A0;
 
 
 
@@ -35,11 +35,13 @@ int running = 1;
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(60, PIN, NEO_GRB + NEO_KHZ800);
 
 
+const unsigned long threeSecs = 3000; // 3 second delay between temp readings
+static unsigned long lastSampleTime = 0 - threeSecs;  // initialize such that a reading is due the first time through loop()
 
 
-
-
-
+// Pins for LEDs
+int chillLed = 11;
+int heatLed = 12;
 
 
 
@@ -59,7 +61,7 @@ DallasTemperature sensors(&oneWire);
 
 
 int chillPin = 8;  // Pin of Relay Module (chill)
-int heatPin = 9; // Pin of Relay Module (heat  - not used yet but hard wired ready to go)
+int heatPin = 9; // Pin of Relay Module (heat)
 
 
 // Set the LCD address to 0x27 for a 16 chars and 2 line display
@@ -77,21 +79,40 @@ void colorWipe(uint32_t c, uint8_t wait) {
 
 
 
-// A bit to create timers
-unsigned long startMillis;  //some global variables available anywhere in the program
-unsigned long currentMillis;
-const unsigned long tempdelay = 6000;  //the value is a number of milliseconds
+
+
+
+
+// a bit for mode button, acting as a switch
+int inPin = 3;         // the number of the input pin
+int outPin = 13;       // the number of the output pin
+
+int state = HIGH;      // the current state of the output pin
+int reading;           // the current reading from the input pin
+int previous = LOW;    // the previous reading from the input pin
+
+// the follow variables are long's because the time, measured in miliseconds,
+// will quickly become a bigger number than can be stored in an int.
+long time = 0;         // the last time the output pin was toggled
+long debounce = 400;   // the debounce time, increase if the output flickers
+
+
 
 
 void setup()
 
 {
 
-  //initial start time
-  startMillis = millis();
+  pinMode(targetPot, INPUT);
+
+  pinMode(inPin, INPUT_PULLUP);
+  pinMode(outPin, OUTPUT);
 
 
-  pinMode(3, INPUT_PULLUP); //mode button
+
+
+
+
   pinMode(4, INPUT_PULLUP); //reset buttton
 
 
@@ -100,10 +121,17 @@ void setup()
 
 
 
-  // Set Pin connected to chiller as an OUTPUT
+  // Set Pin connected to chillerand heater as an OUTPUT
   pinMode(chillPin, OUTPUT);
-  // Set Pin to LOW to turn chiler OFF
+  pinMode(heatPin, OUTPUT);
+
+  // Set Pin to LOW to turn chiler & heater OFF
   digitalWrite(chillPin, LOW);
+  digitalWrite(heatPin, LOW);
+
+
+  pinMode(chillLed, OUTPUT);
+  pinMode(heatLed, OUTPUT);
 
 
 
@@ -130,8 +158,7 @@ void setup()
   colorWipe(strip.Color(0, 0, 255), 50); // Blue
   colorWipe(strip.Color(255, 0, 0), 50); // Green
 
-  // stop for 1 sec
-  delay(300);
+
 
   strip.setPixelColor(0, 0, 0, 0);
   strip.setPixelColor(1, 0, 0, 0);
@@ -142,6 +169,9 @@ void setup()
   strip.setPixelColor(6, 0, 0, 0);
   strip.setPixelColor(7, 0, 0, 0);
   strip.show();
+
+
+
 
 
   // clear the LCD
@@ -157,26 +187,23 @@ void setup()
 
 
 
-int rawValue;
-int oldValue;
-int potPercentage;
-int oldPercentage;
-int xPercentage;
 
 
 void loop()
-
-
 {
+  strip.show();
 
 
-  if (digitalRead(3) == LOW) {
-    //mode button is pressed!
-    Serial.println ("Mode button is pressed");
 
+
+
+  unsigned long now = millis();
+
+  if (now - lastSampleTime >= threeSecs)
+  {
+    lastSampleTime += threeSecs;
+    sensors.requestTemperatures(); // Send the command to get temperature readings
   }
-
-
 
 
 
@@ -196,275 +223,302 @@ void loop()
 
   }
 
+  reading = digitalRead(inPin);
+
+  // if the input just went from LOW and HIGH and we've waited long enough
+  // to ignore any noise on the circuit, toggle the output pin and remember
+  // the time
+  if (reading == HIGH && previous == LOW && millis() - time > debounce) {
+    if (state == HIGH)
+
+
+      state = LOW;  // selects ferment mode
+
+
+    else  // selects pour mode
+
+      state = HIGH;
+
+    time = millis();
+  }
+
+
+
+  digitalWrite(outPin, state);
+
+  previous = reading;
+
+
+  if (state == LOW)  //i.e ferment mode
+
+  {
 
 
 
 
 
-  lcd.setCursor(0, 0);
-  // print the beer name set from variable
-  lcd.print(myBEER);
+
+
+    lcd.setCursor(0, 0);
+    // print the beer name set from variable
+    lcd.print(myBEER);
+    lcd.setCursor(0, 1);
+    lcd.print("Tank temp:   ");
+
+    lcd.print(sensors.getTempCByIndex(0));
+
+    lcd.print((char)223);
+    lcd.print("c  ");
 
 
 
-  lcd.setCursor(0, 1);
-  lcd.print("Tank temp:   ");
+    lcd.setCursor(0, 2);
+    lcd.print("Target temp: ");
 
-  lcd.print(sensors.getTempCByIndex(0));
-
-  lcd.print((char)223);
-  lcd.print("c  ");
+    target = analogRead(targetPot) / 30;
 
 
-
-  lcd.setCursor(0, 2);
-  lcd.print("Target temp: ");
-  // read input twice
-  rawValue = analogRead(A0);
-  rawValue = analogRead(A0); // double read
-  // ignore bad hop-on region of a pot by removing 8 values at both extremes
-  rawValue = constrain(rawValue, 8, 1015);
-  // add some deadband
-  if (rawValue < (oldValue - 4) || rawValue > (oldValue + 4)) {
-    oldValue = rawValue;
-    // convert to percentage
-    potPercentage = map(oldValue, 8, 1008, 0, 50);
-    // Only print if %value changes
-    if (oldPercentage != potPercentage) {
+    lcd.print(target);
+    lcd.print((char)223);
+    lcd.print("c   ");
 
 
-      // print target temperature
-      lcd.print(  potPercentage);
-      lcd.print((char)223);
-      lcd.print("c      ");
 
-      oldPercentage = potPercentage;
+
+
+    // print the day in cycle - upto day 7
+
+    if (day() > 6)
+    {
+      lcd.setCursor(0, 3);
+      lcd.print("Fermenting:  ");
+      lcd.print("DONE");
     }
-  }
+
+    else
+    {
+      lcd.setCursor(0, 3);
+      lcd.print("Fermenting:  ");
+      lcd.print("day ");
+      lcd.print(day());
+
+
+      if (day() < 10)
+      {
+        lcd.print("  ");
+      }
+
+      else
+
+      {
+        lcd.print(" ");
+      }
+    }
 
 
 
 
 
-
-
-
-
-
-
-  // print the day in cycle
-
-
-
-
-  if (day() > 6)
-  {
-    lcd.setCursor(0, 3);
-    lcd.print("Fermenting:  ");
-    lcd.print("DONE");
-
-  }
-
-
-
-  else
-  {
-    lcd.setCursor(0, 3);
-    lcd.print("Fermenting:  ");
-    lcd.print("day ");
-
-    lcd.print(day());
-
-  }
-
-
-
-
-
-
-
-  // timer - check temp & process every 4 seconds
-  currentMillis = millis();  //get the current "time" (actually the number of milliseconds since the program started)
-  if (currentMillis - startMillis >= tempdelay)  //test whether the period has elapsed
-  {
-
-    startMillis += tempdelay;
 
 
     // the logic
 
-    if ((sensors.getTempCByIndex(0)) > potPercentage)
+    if ((sensors.getTempCByIndex(0)) > target)
     {
       digitalWrite(chillPin, HIGH);  // Chiller is  ON
-
+      digitalWrite(chillLed, HIGH);  // Chill LED is ON
+      digitalWrite(heatLed, LOW);    // Heat LED is OFF
+      digitalWrite(heatPin, LOW);    // Heater is OFF
 
     }
+
+
 
     else
 
     {
       digitalWrite(chillPin, LOW);  // Chiller is  OFF
+      digitalWrite(chillLed, LOW);  // Chill LED is OFF
+      digitalWrite(heatLed, HIGH);  // Heat LED is ON
+      digitalWrite(heatPin, HIGH);    // Heater is ON
+    }
 
+
+
+    // start adding an led light for each day in cycle
+    if (day() >= 1)
+    {
+      strip.setPixelColor(7, 255, 0, 0);
+
+      strip.show();
+    }
+    if (day() >= 2)
+    {
+      strip.setPixelColor(7, 255, 0, 0);
+      strip.setPixelColor(6, 255, 0, 0);
+
+      strip.show();
+    }
+    if (day() >= 3)
+    {
+      strip.setPixelColor(7, 255, 0, 0);
+      strip.setPixelColor(6, 255, 0, 0);
+      strip.setPixelColor(5, 255, 0, 0);
+
+      strip.show();
+    }
+    if (day() >= 4)
+    {
+      strip.setPixelColor(7, 255, 0, 0);
+      strip.setPixelColor(6, 255, 0, 0);
+      strip.setPixelColor(5, 255, 0, 0);
+      strip.setPixelColor(4, 255, 0, 0);
+
+      strip.show();
+    }
+    if (day() >= 5)
+    {
+      strip.setPixelColor(7, 255, 0, 0);
+      strip.setPixelColor(6, 255, 0, 0);
+      strip.setPixelColor(5, 255, 0, 0);
+      strip.setPixelColor(4, 255, 0, 0);
+      strip.setPixelColor(3, 255, 0, 0);
+
+      strip.show();
+    }
+    if (day() >= 6)
+    {
+      strip.setPixelColor(7, 255, 0, 0);
+      strip.setPixelColor(6, 255, 0, 0);
+      strip.setPixelColor(5, 255, 0, 0);
+      strip.setPixelColor(4, 255, 0, 0);
+      strip.setPixelColor(3, 255, 0, 0);
+      strip.setPixelColor(2, 255, 0, 0);
+
+      strip.show();
+    }
+    if (day() >= 7)
+    {
+      strip.setPixelColor(7, 255, 0, 0);
+      strip.setPixelColor(6, 255, 0, 0);
+      strip.setPixelColor(5, 255, 0, 0);
+      strip.setPixelColor(4, 255, 0, 0);
+      strip.setPixelColor(3, 255, 0, 0);
+      strip.setPixelColor(2, 255, 0, 0);
+      strip.setPixelColor(1, 255, 0, 0);
+
+      strip.show();
+    }
+    if (day() >= 8)
+    {
+      strip.setPixelColor(7, 255, 0, 0);
+      strip.setPixelColor(6, 255, 0, 0);
+      strip.setPixelColor(5, 255, 0, 0);
+      strip.setPixelColor(4, 255, 0, 0);
+      strip.setPixelColor(3, 255, 0, 0);
+      strip.setPixelColor(2, 255, 0, 0);
+      strip.setPixelColor(1, 255, 0, 0);
+      strip.setPixelColor(0, 255, 0, 0);
+
+      strip.show();
+    }
+
+
+
+
+
+
+  }
+
+
+
+  if (state == HIGH)  //i.e pour mode
+
+  {
+
+
+    lcd.setCursor(0, 0);
+    // print the beer name set from variable
+    lcd.print(myBEER);
+
+
+
+
+    lcd.setCursor(0, 1);
+    lcd.print("Beer left: ");
+    lcd.print("14.4 ltrs");
+
+
+
+    lcd.setCursor(0, 2);
+    lcd.print("Pressure:  ");
+    lcd.print("12 psi ");
+
+    lcd.setCursor(0, 3);
+    lcd.print("Tap: ");
+
+    lcd.print(sensors.getTempCByIndex(0), 1);
+
+    lcd.print((char)223);
+    lcd.print("c ");
+
+    lcd.print("Goal: ");
+
+
+
+    target = analogRead(targetPot) / 30;
+
+
+    lcd.print(target);
+    lcd.print((char)223);
+
+
+
+
+    if (target < 10)
+    {
+      lcd.print("c");
+    }
+
+    else
+
+    {
 
     }
 
 
 
+
+    // the logic
+
+    if ((sensors.getTempCByIndex(0)) > target)
+    {
+      digitalWrite(chillPin, HIGH);  // Chiller is  ON
+      digitalWrite(chillLed, HIGH);  // Chill LED is ON
+      digitalWrite(heatLed, LOW);    // Heat LED is OFF
+      digitalWrite(heatPin, LOW);    // Heater is OFF
+
+    }
+
+
+
+    else
+
+    {
+      digitalWrite(chillPin, LOW);  // Chiller is  OFF
+      digitalWrite(chillLed, LOW);  // Chill LED is OFF
+      digitalWrite(heatLed, HIGH);  // Heat LED is ON
+      digitalWrite(heatPin, HIGH);    // Heater is ON
+    }
+
+
+
+
   }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  // start adding an led light for each day in cycle
-  if (day() >= 1)
-  {
-    strip.setPixelColor(7, 255, 0, 0);
-
-    strip.show();
-  }
-
-
-
-
-
-
-  if (day() >= 2)
-  {
-    strip.setPixelColor(7, 255, 0, 0);
-    strip.setPixelColor(6, 255, 0, 0);
-
-    strip.show();
-  }
-
-
-
-
-
-  if (day() >= 3)
-  {
-    strip.setPixelColor(7, 255, 0, 0);
-    strip.setPixelColor(6, 255, 0, 0);
-    strip.setPixelColor(5, 255, 0, 0);
-
-    strip.show();
-  }
-
-
-
-
-
-
-
-
-
-
-  if (day() >= 4)
-  {
-    strip.setPixelColor(7, 255, 0, 0);
-    strip.setPixelColor(6, 255, 0, 0);
-    strip.setPixelColor(5, 255, 0, 0);
-    strip.setPixelColor(4, 255, 0, 0);
-
-    strip.show();
-  }
-
-
-
-
-
-  if (day() >= 5)
-  {
-    strip.setPixelColor(7, 255, 0, 0);
-    strip.setPixelColor(6, 255, 0, 0);
-    strip.setPixelColor(5, 255, 0, 0);
-    strip.setPixelColor(4, 255, 0, 0);
-    strip.setPixelColor(3, 255, 0, 0);
-
-    strip.show();
-  }
-
-
-
-  if (day() >= 6)
-  {
-    strip.setPixelColor(7, 255, 0, 0);
-    strip.setPixelColor(6, 255, 0, 0);
-    strip.setPixelColor(5, 255, 0, 0);
-    strip.setPixelColor(4, 255, 0, 0);
-    strip.setPixelColor(3, 255, 0, 0);
-    strip.setPixelColor(2, 255, 0, 0);
-
-    strip.show();
-  }
-
-
-
-  if (day() >= 7)
-  {
-    strip.setPixelColor(7, 255, 0, 0);
-    strip.setPixelColor(6, 255, 0, 0);
-    strip.setPixelColor(5, 255, 0, 0);
-    strip.setPixelColor(4, 255, 0, 0);
-    strip.setPixelColor(3, 255, 0, 0);
-    strip.setPixelColor(2, 255, 0, 0);
-    strip.setPixelColor(1, 255, 0, 0);
-
-    strip.show();
-  }
-
-
-
-  if (day() >= 8)
-  {
-    strip.setPixelColor(7, 255, 0, 0);
-    strip.setPixelColor(6, 255, 0, 0);
-    strip.setPixelColor(5, 255, 0, 0);
-    strip.setPixelColor(4, 255, 0, 0);
-    strip.setPixelColor(3, 255, 0, 0);
-    strip.setPixelColor(2, 255, 0, 0);
-    strip.setPixelColor(1, 255, 0, 0);
-    strip.setPixelColor(0, 255, 0, 0);
-
-    strip.show();
-  }
-
-
-
-  if (day() >= 9)
-  {
-    strip.setPixelColor(7, 0, 255, 0);
-    strip.setPixelColor(6, 0, 255, 0);
-    strip.setPixelColor(5, 0, 255, 0);
-    strip.setPixelColor(4, 0, 255, 0);
-    strip.setPixelColor(3, 0, 255, 0);
-    strip.setPixelColor(2, 0, 255, 0);
-    strip.setPixelColor(1, 0, 255, 0);
-    strip.setPixelColor(0, 0, 255, 0);
-
-    strip.show();
-  }
-
-
-
-  /********************************************************************/
-
-  sensors.requestTemperatures(); // Send the command to get temperature readings
-
-  /********************************************************************/
-
-
 
 
 
 }
+
+
+
